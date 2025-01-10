@@ -614,11 +614,11 @@ abstract contract Manager is Ownable {
     using SafeERC20 for IERC20;
     IHouse house;
     IVRFManager VRFManager;
+    
+    uint constant public MODULO = 37;
 
     // Variables
     bool public gameIsLive;
-    uint public minMultiplier = 100;
-    uint public maxMultiplier = 10000;
 
     address public VRFManagerAddress;
     struct Token {
@@ -630,9 +630,10 @@ abstract contract Manager is Ownable {
     mapping(address => Token) public supportedTokenInfo;
 
     struct Bet {
+        uint8 rollUnder;
         uint40 choice;
         uint40 outcome;
-        uint176 placeBlockNumber;
+        uint168 placeBlockNumber;
         uint128 amount;
         uint128 winAmount;
         address player;
@@ -653,19 +654,11 @@ abstract contract Manager is Ownable {
     }
 
     // Events
-    event BetPlaced(uint indexed betId, address indexed player, uint amount, uint choice, address token);
-    event BetSettled(uint indexed betId, address indexed player, uint amount, uint choice, uint outcome, uint winAmount, address token);
+    event BetPlaced(uint indexed betId, address indexed player, uint amount, uint indexed rollUnder, uint choice, address token);
+    event BetSettled(uint indexed betId, address indexed player, uint amount, uint indexed rollUnder, uint choice, uint outcome, uint winAmount, address token);
     event BetRefunded(uint indexed betId, address indexed player, uint amount, address token);
 
     // Setter
-    function setMinMultiplier(uint _minMultiplier) external onlyOwner {
-        minMultiplier = _minMultiplier;
-    }
-    
-    function setMaxMultiplier(uint _maxMultiplier) external onlyOwner {
-        maxMultiplier = _maxMultiplier;
-    }
-
     function setMinBetAmount(address token, uint128 _minBetAmount) external onlyOwner {
         require(_minBetAmount < supportedTokenInfo[token].maxBetAmount, "Min amount must be less than max amount");
         supportedTokenInfo[token].minBetAmount = _minBetAmount;
@@ -690,9 +683,10 @@ abstract contract Manager is Ownable {
         return amount * (10000 - supportedTokenInfo[token].houseEdgeBP) / 10000;
     }
 
-    function amountToWinnableAmount(uint _amount, uint multiplier, address token) internal view returns (uint) {
+    function amountToWinnableAmount(uint _amount, uint rollUnder, address token) internal view returns (uint) {
+        require(0 < rollUnder && rollUnder <= MODULO, "Win probability out of range");
         uint bettableAmount = amountToBettableAmountConverter(_amount, token);
-        return bettableAmount * multiplier / 100;
+        return bettableAmount * MODULO / rollUnder;
     }
 
     // Methods
@@ -718,29 +712,36 @@ abstract contract Manager is Ownable {
     }
 }
 
-contract Crash is ReentrancyGuard, Manager, IGame {
-    function placeBet(uint multiplierChoice, address player, address token, uint amount) external payable nonReentrant {
+contract Roulette is ReentrancyGuard, Manager, IGame {
+    uint constant POPCNT_MULT = 0x0000000000002000000000100000000008000000000400000000020000000001;
+    uint constant POPCNT_MASK = 0x0001041041041041041041041041041041041041041041041041041041041041;
+    uint constant POPCNT_MODULO = 0x3F;
+
+    function placeBet(uint betChoice, address player, address token, uint amount) external payable nonReentrant {
         require(tx.origin == player);
         require(gameIsLive, "Game is not live");
-        require(minMultiplier < multiplierChoice && multiplierChoice <= maxMultiplier, "Bet mask not in range");
+        require(betChoice > 0 && betChoice < 2 ** MODULO - 1, "Bet mask not in range");
 
         if (token == address(0)) {
             amount = msg.value;
         }
         require(amount >= supportedTokenInfo[token].minBetAmount && amount <= supportedTokenInfo[token].maxBetAmount, "Bet amount not within range");
 
-        uint winnableAmount = amountToWinnableAmount(amount, multiplierChoice, token);
+        uint rollUnder = ((betChoice * POPCNT_MULT) & POPCNT_MASK) % POPCNT_MODULO;
+
+        uint winnableAmount = amountToWinnableAmount(amount, rollUnder, token);
         
         house.placeBet{value: msg.value}(player, amount, token, winnableAmount);
         
         uint betId = bets.length;
         betMap[VRFManager.sendRequestRandomness()].push(betId);
 
-        emit BetPlaced(betId, player, amount, multiplierChoice, token);   
+        emit BetPlaced(betId, player, amount, rollUnder, betChoice, token);   
         bets.push(Bet({
-            choice: uint40(multiplierChoice),
+            rollUnder: uint8(rollUnder),
+            choice: uint40(betChoice),
             outcome: 0,
-            placeBlockNumber: uint176(block.number),
+            placeBlockNumber: uint168(block.number),
             amount: uint128(amount),
             winAmount: 0,
             player: player,
@@ -772,21 +773,19 @@ contract Crash is ReentrancyGuard, Manager, IGame {
 
         address player = bet.player;
         address token = bet.token;
-        uint multiplierChoice = bet.choice;
+        uint choice = bet.choice;
+        uint rollUnder = bet.rollUnder;
 
-        uint H = randomNumber % (maxMultiplier - minMultiplier + 1);
-        uint E = maxMultiplier / 100;
-        uint multiplierOutcome = (E * maxMultiplier - H) / (E * 100 - H);
-
-        uint winnableAmount = amountToWinnableAmount(amount, multiplierChoice, token);
-        uint winAmount = multiplierChoice <= multiplierOutcome ? winnableAmount : 0;
+        uint outcome = randomNumber % MODULO;
+        uint winnableAmount = amountToWinnableAmount(amount, rollUnder, token);
+        uint winAmount = (2 ** outcome) & choice != 0 ? winnableAmount : 0;
 
         bet.isSettled = true;
         bet.winAmount = uint128(winAmount);
-        bet.outcome = uint40(multiplierOutcome);
+        bet.outcome = uint40(outcome);
 
         house.settleBet(player, token, amount, winnableAmount, winAmount > 0);
-        emit BetSettled(betId, player, amount, multiplierChoice, multiplierOutcome, winAmount, token);
+        emit BetSettled(betId, player, amount, rollUnder, choice, outcome, winAmount, token);
     }
 
     function refundBet(uint betId) external nonReentrant onlyOwner {
@@ -799,7 +798,7 @@ contract Crash is ReentrancyGuard, Manager, IGame {
         require(block.number > bet.placeBlockNumber + 21600, "Wait before requesting refund");
 
         address token = bet.token;
-        uint winnableAmount = amountToWinnableAmount(amount, bet.choice, token);
+        uint winnableAmount = amountToWinnableAmount(amount, bet.rollUnder, token);
         uint bettedAmount = amountToBettableAmountConverter(amount, token);
         
         bet.isSettled = true;
