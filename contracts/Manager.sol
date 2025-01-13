@@ -25,7 +25,6 @@ contract Manager is Ownable {
         bool isSettled;
     }
 
-
     Bet[] public bets;
     mapping(address => Token) public supportedTokenInfo;
     mapping(bytes32 => uint[]) public betMap;
