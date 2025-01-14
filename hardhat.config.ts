@@ -3,7 +3,7 @@ import "@nomicfoundation/hardhat-toolbox";
 const { vars } = require("hardhat/config");
 
 const PRIVATE_KEY = vars.get("FEE_DEVELOPER_KEY");
-const ETHERSCAN_API_KEY = vars.get("ETHERSCAN_API_KEY");
+// const ETHERSCAN_API_KEY = vars.get("ETHERSCAN_API_KEY");
 const config: HardhatUserConfig = {
   solidity: "0.8.28",
   networks: {
@@ -13,20 +13,20 @@ const config: HardhatUserConfig = {
     },
   },
   sourcify: {
-    enabled: true
+    enabled: true,
   },
   etherscan: {
-    apiKey: ETHERSCAN_API_KEY,
+    // apiKey: ETHERSCAN_API_KEY,
     customChains: [
       {
         network: "world",
         chainId: 480,
         urls: {
           apiURL: "https://api.worldscan.org/api",
-          browserURL: "https://worldscan.org/"
-        }
-      }
-    ]
+          browserURL: "https://worldscan.org/",
+        },
+      },
+    ],
   },
 };
 

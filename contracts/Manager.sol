@@ -6,17 +6,18 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract Manager is Ownable {
     bool public gameIsLive;
-    uint public minMultiplier = 100;
-    uint public maxMultiplier = 10000;
+    uint256 public minMultiplier = 100;
+    uint256 public maxMultiplier = 10000;
 
     struct Token {
         uint128 minBetAmount;
         uint128 maxBetAmount;
-        uint houseEdgeBP;
+        uint256 houseEdgeBP;
     }
+
     struct Bet {
-        uint40 choice;
-        uint40 outcome;
+        bool choice;
+        bool winResult;
         uint176 placeBlockNumber;
         uint128 amount;
         uint128 winAmount;
@@ -27,25 +28,32 @@ contract Manager is Ownable {
 
     Bet[] public bets;
     mapping(address => Token) public supportedTokenInfo;
-    mapping(bytes32 => uint[]) public betMap;
+    mapping(bytes32 => uint256[]) public betMap;
 
     //events
-    event BetPlaced(uint indexed betId, address indexed player, uint amount, uint choice, address token);
-    event BetSettled(uint indexed betId, address indexed player, uint amount, uint choice, uint outcome, uint winAmount, address token);
-    event BetRefunded(uint indexed betId, address indexed player, uint amount, address token);
+    event BetPlaced(uint256 indexed betId, address indexed player, uint256 amount, bool choice, address token);
+    event BetSettled(
+        uint256 indexed betId,
+        address indexed player,
+        uint256 amount,
+        bool choice,
+        bool outcome,
+        uint256 winAmount,
+        address token
+    );
+    event BetRefunded(uint256 indexed betId, address indexed player, uint256 amount, address token);
 
-    constructor(address initialOwner) Ownable(msg.sender){
-    }
+    constructor(address initialOwner) Ownable(msg.sender) {}
 
-    function betsLength() external view returns (uint) {
+    function betsLength() external view returns (uint256) {
         return bets.length;
     }
 
-    function setMinMultiplier(uint _minMultiplier) external onlyOwner {
+    function setMinMultiplier(uint256 _minMultiplier) external onlyOwner {
         minMultiplier = _minMultiplier;
     }
-    
-    function setMaxMultiplier(uint _maxMultiplier) external onlyOwner {
+
+    function setMaxMultiplier(uint256 _maxMultiplier) external onlyOwner {
         maxMultiplier = _maxMultiplier;
     }
 
@@ -59,7 +67,7 @@ contract Manager is Ownable {
         supportedTokenInfo[token].maxBetAmount = _maxBetAmount;
     }
 
-    function setHouseEdgeBP(address token, uint _houseEdgeBP) external onlyOwner {
+    function setHouseEdgeBP(address token, uint256 _houseEdgeBP) external onlyOwner {
         require(gameIsLive == false, "Bets in pending");
         supportedTokenInfo[token].houseEdgeBP = _houseEdgeBP;
     }
@@ -68,18 +76,21 @@ contract Manager is Ownable {
         gameIsLive = !gameIsLive;
     }
 
-    function amountToBettableAmountConverter(uint amount, address token) internal view returns(uint) {
+    function amountToBettableAmountConverter(uint256 amount, address token) internal view returns (uint256) {
         return amount * (10000 - supportedTokenInfo[token].houseEdgeBP) / 10000;
     }
 
-    function amountToWinnableAmount(uint _amount, uint multiplier, address token) internal view returns (uint) {
-        uint bettableAmount = amountToBettableAmountConverter(_amount, token);
+    function amountToWinnableAmount(uint256 _amount, uint256 multiplier, address token)
+        internal
+        view
+        returns (uint256)
+    {
+        uint256 bettableAmount = amountToBettableAmountConverter(_amount, token);
         return bettableAmount * multiplier / 100;
     }
 
-
     // withdraw any token from contract
-    function withdrawCustomTokenFunds(address beneficiary, uint withdrawAmount, address token) external onlyOwner {
+    function withdrawCustomTokenFunds(address beneficiary, uint256 withdrawAmount, address token) external onlyOwner {
         require(withdrawAmount <= IERC20(token).balanceOf(address(this)), "Withdrawal exceeds limit");
         IERC20(token).transfer(beneficiary, withdrawAmount);
     }
